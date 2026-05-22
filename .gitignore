@@ -1,4 +1,82 @@
-/.venv
+# ==========================================
+# 1. Python 编译文件与缓存
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ==========================================
+# 2. 虚拟环境 (Virtual Environments)
+# ==========================================
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ==========================================
+# 3. 常见 IDE 与编辑器缓存
+# ==========================================
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/
+*.code-workspac
+
+# 训练日志与模型权重 (TensorBoard, Checkpoints 等)
+runs/
+logs/
+*.log
+checkpoints/
+weights/
+*.pt
+*.pth
+*.onnx
+*.ckpt
+
+# ==========================================
+# 5. 测试与代码质量检查
+# ==========================================
+.htmlcov/
+.tox/
+.nosexy/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
 /AGENTS.md
 /__pycache__
 /caption_distribution.png
