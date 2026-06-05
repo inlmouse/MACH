@@ -10,7 +10,7 @@ from tqdm import tqdm
 from models.expalignet import expalignet
 from dataset.transforms import make_coco_transforms
 from utils.detect_utils import non_max_suppression, scale_boxes, tensor2img
-from utils.train_utils import load_model
+from utils.cnn_train_utils import load_model
 from utils.visualization_utils import draw_predictions
 from dataset.build_dataloader import load_labels
 from dataset.textmodelembedder import Qwen3VLEmbeddingTextEmbedder, CLIPTextEmbedder

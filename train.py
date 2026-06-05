@@ -7,7 +7,7 @@ import os
 from models.expalignet import expalignet
 from dataset.build_dataloader import build_dataloader, load_labels
 from dataset.textmodelembedder import Qwen3VLEmbeddingTextEmbedder, CLIPTextEmbedder
-from utils.train_utils import train_one_epoch, validate_one_epoch, save_checkpoint, load_model, get_scheduler
+from utils.cnn_train_utils import train_one_epoch, validate_one_epoch, save_checkpoint, load_model, get_scheduler
 
 
 

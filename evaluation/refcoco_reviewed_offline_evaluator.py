@@ -12,16 +12,16 @@ from utils.visualization_utils import draw_predictions
 
 from dataset.transforms import make_coco_transforms
 from utils.detect_utils import non_max_suppression, scale_boxes
-from utils.train_utils import load_model
+from utils.cnn_train_utils import load_model
 from dataset.textmodelembedder import Qwen3VLEmbeddingTextEmbedder, CLIPTextEmbedder
 
 TEXT_EMBED_DIM = 768
 TARGET_SIZE = 640
 DEVICE = "cuda:0"
 QWEN_MODEL_PATH = "/root/autodl-tmp/Qwen3-VL-Embedding-2B"
-CKPT_PATH = "outputs-qwen2b-768/model_mgfixed_vitneck_woffn_tiny_epoch30.pth"
+CKPT_PATH = "outputs-qwen2b-768/model_last.pth"
 
-CONF_THRESH = 0.05
+CONF_THRESH = 0.01
 NMS_THRESH = 0.75
 
 def box_iou(boxes1, boxes2):
@@ -46,7 +46,7 @@ def preprocess_image(image_path, target_size=640):
     #img.save("/project/GLS/HJY/VLMs/test_results/test-preinfer.jpg")
     return image_tensor, (orig_w, orig_h), image
 
-def inference_single(model, image_path, text_feats=None, device='cuda', target_size=640, 
+def inference_single(model, image_path, text_feats=None, mask=None, device='cuda', target_size=640, 
                      conf_thresh=0.25, nms_thresh=0.5):
     """单张图片推理"""
     # 预处理
@@ -57,7 +57,7 @@ def inference_single(model, image_path, text_feats=None, device='cuda', target_s
     # 推理
     with torch.no_grad():
         with torch.cuda.amp.autocast():
-            outputs = model(image_tensor, text_feats)
+            outputs = model(image_tensor, text_feats, mask)
             pred = outputs[0] if isinstance(outputs, tuple) else outputs
     
     # NMS 后处理
@@ -101,11 +101,11 @@ def load_gt_dict(coco_json_path, model=None, textencoder=None):
         file_name = img_dict[image_id]['file_name'] 
         gt_dict[image_id] = {"bbox": bbox, "dataset_name": dataset_name, "caption": caption, "file_name": file_name}
         image_to_captions[caption].append(image_id)
-        textfeats = textencoder.embedtext([caption], normalize=True).to(DEVICE)
+        textfeats, mask = textencoder.embedtext([caption], normalize=True, tokenlevel=True)
         img_path = "/root/autodl-tmp/OOD/refcoco/images/train2014/"+file_name
         model.set_class(textfeats)
         image, boxes, scores, labels = inference_single(
-                model, str(img_path), textfeats, DEVICE, TARGET_SIZE, 
+                model, str(img_path), textfeats, mask, DEVICE, TARGET_SIZE, 
                 CONF_THRESH, NMS_THRESH
             )
         model.unset_class()
@@ -163,12 +163,12 @@ if __name__ == "__main__":
     )
     model, _, _ = load_model(CKPT_PATH, TEXT_EMBED_DIM, None, DEVICE)
 
-    # load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcoco_val_reviewed.json", model, textencoder)
     load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcoco_testA_reviewed.json", model, textencoder)
-    # load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcoco_testB_reviewed.json", model, textencoder)
-    # load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcoco+_val_reviewed.json", model, textencoder)
-    # load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcoco+_testA_reviewed.json", model, textencoder)
-    # load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcoco+_testB_reviewed.json", model, textencoder)
-    # load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcocog_val_reviewed.json", model, textencoder)
-    # load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcocog_test_reviewed.json", model, textencoder)
+    load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcoco_val_reviewed.json", model, textencoder)
+    load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcoco_testB_reviewed.json", model, textencoder)
+    load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcoco+_val_reviewed.json", model, textencoder)
+    load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcoco+_testA_reviewed.json", model, textencoder)
+    load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcoco+_testB_reviewed.json", model, textencoder)
+    load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcocog_val_reviewed.json", model, textencoder)
+    load_gt_dict("/root/autodl-tmp/OOD/refcoco/annotations/refcocog_test_reviewed.json", model, textencoder)
 

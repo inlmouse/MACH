@@ -306,7 +306,7 @@ def build_dataloader(
         
         text_is_positive = torch.stack(text_is_positive, dim=0).bool() if text_is_positive else None
         batch_idx = torch.tensor(batch_idx, dtype=torch.long) if batch_idx else torch.empty((0,), dtype=torch.long)
-
+        gt_groups = [(batch_idx == i).sum().item() for i in range(images.shape[0])]
         cls = torch.cat(cls_all, dim=0) if cls_all else torch.empty((0, 1), dtype=torch.float32)
         bboxes = torch.cat(bboxes_all, dim=0) if bboxes_all else torch.empty((0, 4), dtype=torch.float32)
 
@@ -318,6 +318,7 @@ def build_dataloader(
                 'text_is_positive': text_is_positive,  # 文本正负样本标签，形状 [B, num_infonce_batch] bool，如果没有则是 [0] bool
                 'targets': targets_list,          # 完整原始 dict 列表，可供后续使用（如可视化、计算 mAP 等）
                 'batch_idx': batch_idx,
+                'gt_groups': gt_groups,
                 'cls': cls,
                 'bboxes': bboxes,
             }

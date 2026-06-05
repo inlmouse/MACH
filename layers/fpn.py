@@ -77,7 +77,7 @@ class FPANeck(nn.Module):
     def get_output_channels(self):
         return [self.c3, self.c4, self.c5]  # P3/8 输出 c3，P4/16 输出 c4，P5/32 输出 c5
 
-    def forward(self, features, w=None, batch=None):
+    def forward(self, features, w=None, m=None, batch=None):
         """
         Args:
             features: List[Tensor] = [P3/8 (256), P4/16 (512), P5/32 (1024)]

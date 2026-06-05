@@ -126,15 +126,99 @@ class expalignet(nn.Module):
         - 训练: forward(x, batch) → (loss, loss_items)
         """
         features = self.backbone(x)[1:]      # List[Tensor]，通常 3 个尺度
-        neck_out = self.neck(features, w)       # List[Tensor]，融合后的 3 个特征图
+        neck_out = self.neck(features, w, m, batch)       # List[Tensor]，融合后的 3 个特征图
         if w is not None and self.text_embed_dim > 0:
             w = self.textffn(w)               # 对文本特征进行投影
-        preds = self.head(neck_out[:3], w, m=m)          # List[Tensor] 或 Tensor
-        if batch is not None:
-            total_loss, loss_items = self.loss_fn(preds, batch)
+        preds, jepa_loss = self.head(neck_out[:3], w, m=m, batch=batch)          # List[Tensor] 或 Tensor
+        if self.training:
+            # 防御性断言：既然是训练模式，调用方必须传 batch 标签！
+            if batch is None:
+                raise ValueError("处于训练模式 (self.training=True) 时，必须传入 batch 参数计算 Loss！")
+                
+            total_loss, loss_items = self.loss_fn(preds, batch, jepa_loss)
             return preds, total_loss, loss_items
 
         return preds, None, None
+    
+    @torch.no_grad()
+    def predict(self, x, w, m=None, conf_threshold=0.25, nms_threshold=0.45, orig_target_sizes=None):
+        """
+        端到端推理接口（YOLO 架构兼容版）。
+        内置动态类别切换、NMS 过滤及坐标还原，输出格式与 vlrtdetrnet 保持一致。
+        
+        Args:
+            x (torch.Tensor): 图像张量 [B, 3, H, W]，已归一化。
+            w (torch.Tensor): 文本特征 [B, nc, L, Dim] 或 [B, nc, Dim]。
+            m (torch.Tensor, optional): 文本 Mask。
+            conf_threshold (float): 置信度过滤阈值。
+            nms_threshold (float): NMS IoU 阈值。
+            orig_target_sizes (torch.Tensor, optional): 原始图像尺寸 [B, 2]，格式为 (高, 宽)。
+        
+        Returns:
+            List[Dict]: 长度为 B 的列表，包含 boxes (绝对坐标 xyxy), scores, labels
+        """
+        was_training = self.training
+        self.eval()
+
+        # 1. 挂载动态文本特征 (改变模型内部卷积/线性层权重)
+        self.set_class(w)
+
+        try:
+            # 2. 前向传播
+            # 即使 head 缓存了 class，我们依然按照签名传入 w，让 neck 或其他组件正常工作
+            forward_outs = self.forward(x, w, m=m)
+            preds = forward_outs[0] if isinstance(forward_outs, tuple) else forward_outs
+            
+        finally:
+            # 3. 护城河级防御：无论推理成功与否，必定卸载特征，防止内存泄漏和串图
+            self.unset_class()
+            if was_training:
+                self.train()
+
+        # 4. 后处理: 引入你的 NMS 与 坐标缩放工具
+        from utils.detect_utils import non_max_suppression, scale_boxes
+        
+        # 执行 NMS (输出列表，长度为 B，每个元素是 [num_dets, 6] 的 Tensor)
+        preds_after_nms = non_max_suppression(preds, conf_thres=conf_threshold, iou_thres=nms_threshold)
+
+        results = []
+        B = x.shape[0]
+        input_h, input_w = x.shape[2], x.shape[3]
+
+        # 5. 逐图解析与坐标还原
+        for i in range(B):
+            pred_i = preds_after_nms[i]
+
+            # 处理该图片没有检测到任何目标的情况
+            if pred_i is None or len(pred_i) == 0:
+                results.append({
+                    "boxes": torch.empty((0, 4), device=x.device),
+                    "scores": torch.empty((0,), device=x.device),
+                    "labels": torch.empty((0,), device=x.device, dtype=torch.long)
+                })
+                continue
+
+            # NMS 输出的通常是基于输入图像尺寸 (如 640x640) 的绝对坐标 [x1, y1, x2, y2]
+            final_boxes = pred_i[:, :4]
+            final_scores = pred_i[:, 4]
+            final_labels = pred_i[:, 5].long()
+
+            # 如果传入了原图尺寸，将框从 640x640 映射回真实分辨率
+            if orig_target_sizes is not None:
+                orig_h, orig_w = orig_target_sizes[i]
+                final_boxes = scale_boxes(
+                    img1_shape=(input_h, input_w),
+                    boxes=final_boxes,
+                    img0_shape=(orig_h, orig_w)
+                )
+
+            results.append({
+                "boxes": final_boxes,
+                "scores": final_scores,
+                "labels": final_labels
+            })
+
+        return results
     
     def set_class(self, text_feats):
         """

@@ -1,5 +1,3 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-
 from __future__ import annotations
 
 from typing import Any
@@ -180,9 +178,9 @@ class HungarianMatcher(nn.Module):
             return [(torch.tensor([], dtype=torch.long), torch.tensor([], dtype=torch.long)) for _ in range(bs)]
 
         # Flatten to compute cost matrices in batch format
-        pred_scores = pred_scores.detach().view(-1, nc)
+        pred_scores = pred_scores.detach().reshape(-1, nc)
         pred_scores = F.sigmoid(pred_scores) if self.use_fl else F.softmax(pred_scores, dim=-1)
-        pred_bboxes = pred_bboxes.detach().view(-1, 4)
+        pred_bboxes = pred_bboxes.detach().reshape(-1, 4)
 
         # Compute classification cost
         pred_scores = pred_scores[:, gt_cls]
@@ -612,7 +610,7 @@ class DETRLoss(nn.Module):
         """
         self.device = pred_bboxes.device
         match_indices = kwargs.get("match_indices", None)
-        gt_cls, gt_bboxes, gt_groups = batch["cls"], batch["bboxes"], batch["gt_groups"]
+        gt_cls, gt_bboxes, gt_groups = batch["cls"].flatten().long(), batch["bboxes"], batch["gt_groups"]
 
         total_loss = self._get_loss(
             pred_bboxes[-1], pred_scores[-1], gt_bboxes, gt_cls, gt_groups, postfix=postfix, match_indices=match_indices
@@ -642,6 +640,8 @@ class RTDETRDetectionLoss(DETRLoss):
         dn_bboxes: torch.Tensor | None = None,
         dn_scores: torch.Tensor | None = None,
         dn_meta: dict[str, Any] | None = None,
+        enc_bboxes: torch.Tensor | None = None,  # two stage support
+        enc_scores: torch.Tensor | None = None,  # two stage support
     ) -> dict[str, torch.Tensor]:
         """Forward pass to compute detection loss with optional denoising loss.
 
@@ -673,6 +673,23 @@ class RTDETRDetectionLoss(DETRLoss):
             # If no denoising metadata is provided, set denoising loss to zero
             total_loss.update({f"{k}_dn": torch.tensor(0.0, device=self.device) for k in total_loss})
 
+        # Encoder Loss(two stage loss)
+        if enc_bboxes is not None and enc_scores is not None:
+            # 提取真实标签 (和 DETRLoss.forward 里做的一样)
+            gt_cls = batch["cls"].flatten().long()
+            gt_bboxes = batch["bboxes"]
+            gt_groups = batch["gt_groups"]
+
+            # 直接复用基类的 _get_loss，它会自动调用 HungarianMatcher 并在最后加上 postfix
+            enc_loss = self._get_loss(
+                pred_bboxes=enc_bboxes,
+                pred_scores=enc_scores,
+                gt_bboxes=gt_bboxes,
+                gt_cls=gt_cls,
+                gt_groups=gt_groups,
+                postfix="_enc"  # <--- 这会自动生成 loss_class_enc, loss_bbox_enc, loss_giou_enc
+            )
+            total_loss.update(enc_loss)
         return total_loss
 
     @staticmethod

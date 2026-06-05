@@ -79,7 +79,7 @@ class DetectionLoss(nn.Module):
         self.reg_max = reg_max
         self.no = nc + reg_max * 4
         self.stride = torch.as_tensor(stride, dtype=torch.float32).detach()
-        self.hyp = hyp or type('Hyp', (), {'box': 7.5, 'cls': 0.5, 'dfl': 1.5, 'rank': 0.5})()
+        self.hyp = hyp or type('Hyp', (), {'box': 7.5, 'cls': 0.5, 'dfl': 1.5, 'jepa': 0.1})()
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
@@ -118,7 +118,7 @@ class DetectionLoss(nn.Module):
             pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(proj.type(pred_dist.dtype))
         return dist2bbox(pred_dist, anchor_points, xywh=False)
 
-    def forward(self, preds, batch, simmaps=None):
+    def forward(self, preds, batch, jepa_loss=None):
         """
         preds: List[Tensor] 或 Tuple，来自 neck 的多尺度特征图
         batch: dict，包含 'batch_idx', 'cls', 'bboxes' 等键
@@ -127,10 +127,9 @@ class DetectionLoss(nn.Module):
         # 从 preds 动态获取设备（模型可能被移动到不同设备）
         device = preds[0].device if isinstance(preds, (list, tuple)) else preds[1][0].device
         self.device = device
-        loss = torch.zeros(4, device=device)  # [box, cls, dfl, sim]
-        if simmaps is not None and self.training:
-            sim_total_loss, sim_loss_items = multi_positive_contrastive_ranking_loss(simmaps, batch)
-            loss[3] = sim_total_loss * self.hyp.rank
+        loss = torch.zeros(4, device=device)  # [box, cls, dfl, jepa]
+        if jepa_loss is not None and self.training:
+            loss[3] = jepa_loss * self.hyp.jepa
 
         # 处理 preds（多尺度特征图）
         feats = preds[1] if isinstance(preds, tuple) else preds

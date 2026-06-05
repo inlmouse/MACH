@@ -114,22 +114,23 @@ def xywh2xyxy(x):
     y[..., 2:] = xy + wh  # bottom right xy
     return y
 
-def xywh2xyxy(x):
-    """Convert bounding box coordinates from (x, y, width, height) format to (x1, y1, x2, y2) format where (x1, y1) is
-    the top-left corner and (x2, y2) is the bottom-right corner. Note: ops per 2 channels faster than per channel.
+def xyxy2xywh(x):
+    """
+    Convert bounding box coordinates from (x1, y1, x2, y2) format to (x, y, width, height) format where (x1, y1) is the
+    top-left corner and (x2, y2) is the bottom-right corner.
 
     Args:
-        x (np.ndarray | torch.Tensor): Input bounding box coordinates in (x, y, width, height) format.
+        x (np.ndarray | torch.Tensor): The input bounding box coordinates in (x1, y1, x2, y2) format.
 
     Returns:
-        (np.ndarray | torch.Tensor): Bounding box coordinates in (x1, y1, x2, y2) format.
+        y (np.ndarray | torch.Tensor): The bounding box coordinates in (x, y, width, height) format.
     """
     assert x.shape[-1] == 4, f"input shape last dimension expected 4 but input shape is {x.shape}"
-    y = empty_like(x)  # faster than clone/copy
-    xy = x[..., :2]  # centers
-    wh = x[..., 2:] / 2  # half width-height
-    y[..., :2] = xy - wh  # top left xy
-    y[..., 2:] = xy + wh  # bottom right xy
+    y = torch.empty_like(x)  # faster than clone/copy
+    y[..., 0] = (x[..., 0] + x[..., 2]) / 2  # x center
+    y[..., 1] = (x[..., 1] + x[..., 3]) / 2  # y center
+    y[..., 2] = x[..., 2] - x[..., 0]  # width
+    y[..., 3] = x[..., 3] - x[..., 1]  # height
     return y
 
 def clip_boxes(boxes, img_shape):
@@ -261,3 +262,16 @@ def non_max_suppression(
         output[xi] = x[i]
 
     return output
+
+def _no_grad_trunc_normal_(tensor, mean, std, a, b):
+    def norm_cdf(x): return (1. + math.erf(x / math.sqrt(2.))) / 2.
+    # if (mean < a - 2 * std) or (mean > b + 2 * std):
+    #     warnings.warn("mean is more than 2 std from [a, b] in nn.init.trunc_normal_. The distribution of values may be incorrect.", stacklevel=2)
+    with torch.no_grad():
+        l = norm_cdf((a - mean) / std); u = norm_cdf((b - mean) / std)
+        tensor.uniform_(2 * l - 1, 2 * u - 1); tensor.erfinv_(); tensor.mul_(std * math.sqrt(2.)); tensor.add_(mean); tensor.clamp_(min=a, max=b)
+        return tensor
+
+
+def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
+    return _no_grad_trunc_normal_(tensor, mean, std, a, b)

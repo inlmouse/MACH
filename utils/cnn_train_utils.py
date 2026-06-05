@@ -404,7 +404,7 @@ def train_one_epoch(
         imgs = batch['img'].to(device)
         B = imgs.shape[0]
         batch_captions = batch.get('batch_captions', [])
-        batch_captions = [s[:1000] for s in batch_captions]
+        batch_captions = [s[:300] for s in batch_captions]
         if tokenlevel_embdedding:
             textfeats, mask = textencoder.embedtext(batch_captions, normalize=True, batch_size=len(batch_captions), tokenlevel=tokenlevel_embdedding)
             _, L, C = textfeats.shape
@@ -462,7 +462,7 @@ def train_one_epoch(
                     'box': f"{avg_loss_items[0]:.4f}",
                     'cls': f"{avg_loss_items[1]:.4f}",
                     'dfl': f"{avg_loss_items[2]:.4f}",
-                    'rank': f"{avg_loss_items[3]:.4f}"
+                    'jepa': f"{avg_loss_items[3]:.4f}"
                 })
             else:
                 pbar.set_postfix({
@@ -475,11 +475,11 @@ def train_one_epoch(
             if (wandb_run is not None) and (batch_idx % log_interval == 0 or batch_idx == len(dataloader) - 1):
                 step = global_step + batch_idx
                 wandb_run.log({
-                    "batch/step": step,
                     "batch/loss": loss_per_img,
                     "batch/box_loss": batch_loss_items[0].item(),
                     "batch/cls_loss": batch_loss_items[1].item(),
                     "batch/dfl_loss": batch_loss_items[2].item(),
+                    "batch/jepa_loss": batch_loss_items[3].item(),
                     "batch/lr": current_lr,
                 }, step=step)
     
