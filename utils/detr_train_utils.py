@@ -40,26 +40,13 @@ def _build_optimizer(model, base_lr, weight_decay):
     辅助函数：统一处理优化器参数分组与学习率分配
     (将 Backbone 的学习率按惯例设为 base_lr * 0.1)
     """
-    contrastive_head_params = []
-    other_head_params = []
+    optimizer = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad], 
+        lr=base_lr, 
+        weight_decay=weight_decay
+    )
     
-    # 安全提取 head 参数（兼容 expalignet 和 vlrtdetrnet）
-    if hasattr(model, 'head'):
-        for n, p in model.head.named_parameters():
-            # 兼容两代架构的对比头命名
-            if 'score_head' in n or 'alignhead' in n.lower():  
-                contrastive_head_params.append(p)
-            else:
-                other_head_params.append(p)
-
-    param_groups = [
-        {'params': model.backbone.parameters(), 'lr': base_lr * 0.1},
-        {'params': model.neck.parameters(), 'lr': base_lr},
-        {'params': other_head_params, 'lr': base_lr},
-        {'params': contrastive_head_params, 'lr': base_lr * 1.0}, # 对比头独立学习率
-    ]
-    
-    return AdamW(param_groups, weight_decay=weight_decay)
+    return optimizer
 
 
 def load_model(ckpt_path, args, device='cuda', base_lr=1e-4, weight_decay=1e-4, resume=True):
@@ -157,23 +144,46 @@ def load_model(ckpt_path, args, device='cuda', base_lr=1e-4, weight_decay=1e-4, 
 
     return model, AdamW_optimizer, epoch
 
-def get_scheduler(optimizer, warmup_epochs: float, num_epochs: int, start_epoch: int = 0):
-    """全局 Cosine Annealing + 前期 Linear Warmup 线性逼近"""
-    def lr_lambda(current_epoch: float):
-        progress = current_epoch / num_epochs
-        lrf = 0.01 
-        cosine_factor = 0.5 * (1.0 + math.cos(math.pi * progress)) * (1 - lrf) + lrf
+def get_scheduler(optimizer, warmup_steps: int, epochs: int, steps_per_epoch: int):
+    """
+    DINO 风格调度器 (Step-based)：
+    - 前期：按 Iteration 进行平滑 Linear Warmup
+    - 后期：按 Epoch 进行 Multi-Step 阶跃衰减 (默认在 80% 和 90% 处衰减)
+    
+    Args:
+        optimizer: 优化器
+        warmup_steps: Warmup 的迭代次数 (通常设为 500 ~ 1000)
+        epochs: 总训练 Epoch 数
+        steps_per_epoch: 每个 Epoch 包含的 Batch 数量 (即 len(dataloader))
+    """
+    # 设定阶跃衰减的节点 (转换为具体的 step 数)
+    # 如果是短周期微调 (<=12 epoch)，通常只在倒数第一或第二 epoch 降一次 LR
+    if epochs <= 12:
+        drop_epochs = [epochs - 1]  
+    else:
+        drop_epochs = [int(epochs * 0.8), int(epochs * 0.9)] 
         
-        if current_epoch < warmup_epochs:
-            target = cosine_factor
-            return (current_epoch + 1.0) / warmup_epochs * target
-        else:
-            return cosine_factor
+    drop_steps = [e * steps_per_epoch for e in drop_epochs]
+
+    def lr_lambda(current_step: int):
+        # ==========================================
+        # 1. 阶段一：基于 Iteration 的平滑 Warmup
+        # ==========================================
+        if current_step < warmup_steps:
+            # 防止第 0 步学习率为绝对的 0（避免死掉），给定一个极小的起点如 0.01 倍
+            return max(0.01, float(current_step) / float(max(1, warmup_steps)))
+        
+        # ==========================================
+        # 2. 阶段二：基于 Epoch 的 Multi-Step 衰减
+        # ==========================================
+        gamma = 1.0
+        for drop_step in drop_steps:
+            if current_step >= drop_step:
+                gamma *= 0.1  # 每次路过节点，学习率降为 1/10
+                
+        return gamma
 
     scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
-    for _ in range(start_epoch - 1):
-        scheduler.step()
-
     return scheduler
 
 
@@ -256,7 +266,32 @@ def train_one_epoch(
         # 反向传播
         # ==========================================
         if use_amp and scaler is not None:
+            # 1. 缩放 Loss 并反向传播
             scaler.scale(loss).backward()
+            
+            # 2. 梯度反缩放 (为梯度裁剪做准备)
+            scaler.unscale_(optimizer)
+            
+            # 3. DETR 必备：梯度裁剪 (防止 Transformer 初期梯度爆炸)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
+            
+            # 4. 记录当前的 Scale 大小
+            scale_before = scaler.get_scale()
+            
+            # 5. 更新优化器 (内部会自动决定是否真实执行 optimizer.step())
+            scaler.step(optimizer)
+            
+            # 6. 更新缩放器 (处理 inf/nan 动态调整 scale 大小)
+            scaler.update()
+            
+            # 如果发生了溢出导致 Scale 缩小，说明 optimizer 被跳过了
+            # 这时我们也跳过 scheduler.step()，保持两者步调绝对一致
+            scale_after = scaler.get_scale()
+            optimizer_was_stepped = (scale_before <= scale_after)
+            
+            if optimizer_was_stepped:
+                scheduler.step()
+
             # ==========================================
             # 遍历所有要求梯度但没拿到梯度的参数
             # ==========================================
@@ -269,15 +304,13 @@ def train_one_epoch(
             #             ghost_count += 1
             #     print(f"总计: {ghost_count} 个摸鱼参数\n")
             # DETR 必备：梯度裁剪 (防止 Transformer 初期梯度爆炸)
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
-            
-            scaler.step(optimizer)
-            scaler.update()
         else:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
             optimizer.step()
+            scheduler.step()
+
+        optimizer.zero_grad()
         
         # ==========================================
         # 累积损失 (解包字典)

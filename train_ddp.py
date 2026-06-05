@@ -60,8 +60,8 @@ class TrainConfig:
     val_interval: int = 1
     use_amp: bool = True
     warmup_epochs: int = 3
-    base_lr: float = 0.002
-    weight_decay: float = 0.025
+    base_lr: float = 1e-4#2e-3
+    weight_decay: float = 1e-4#0.025
     use_wandb: bool = False
     wandb_project: str = "VLMs"
     wandb_entity: str = "inlmouse-tsinghua-university"
@@ -229,7 +229,7 @@ def prepare_dataset(config: TrainConfig, rank: int, world_size: int, text_encode
     return train_loader, train_sampler, all_caption_embeddings, caption_to_idx
 
 
-def build_training_model(config, device: torch.device, local_rank: int, world_size: int):
+def build_training_model(config, device: torch.device, local_rank: int, world_size: int, steps_per_epoch: int):
     """构建模型、优化器和调度器 (完美适配 Factory 与多架构)"""
     
     # 1. 把 config (可能是 dataclass 或 argparse) 提取为标准的 args 字典供 Factory 使用
@@ -262,9 +262,9 @@ def build_training_model(config, device: torch.device, local_rank: int, world_si
     # ==========================================
     scheduler = get_scheduler(
         optimizer=optimizer, 
-        warmup_epochs=config.warmup_epochs, 
-        num_epochs=config.num_epochs, 
-        start_epoch=start_epoch
+        warmup_steps=min(1000, steps_per_epoch), 
+        epochs=config.num_epochs, 
+        steps_per_epoch=steps_per_epoch
     )
     
     # ==========================================
@@ -331,7 +331,7 @@ def main():
         txt_feats, _ = text_encoder.embedtext(label_list, normalize=True, batch_size=32, tokenlevel=config.tokenlevel_embdedding)
 
     
-    model, optimizer, scheduler, start_epoch = build_training_model(config, device, local_rank, world_size)
+    model, optimizer, scheduler, start_epoch = build_training_model(config, device, local_rank, world_size, steps_per_epoch=len(train_loader))
 
     scaler = GradScaler() if config.use_amp else None
 
@@ -394,7 +394,7 @@ def main():
                 textencoder=text_encoder if is_main_process(rank) else None,
                 output_dir=config.output_dir,
                 # RefCOCOg 专用
-                coco_json_path="/root/autodl-tmp/OOD/refcoco/annotations/refcocog_val_reviewed.json",
+                coco_json_path="/root/autodl-tmp/OOD/refcoco/annotations/refcoco_testA_reviewed.json",
                 image_root="/root/autodl-tmp/OOD/refcoco/images/train2014",
                 conf_thresh=0.01,
                 nms_thresh=0.75,
