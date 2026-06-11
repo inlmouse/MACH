@@ -94,6 +94,7 @@ def validate_refcoco_one_epoch(
     image_root=None,
     conf_thresh=0.01,
     nms_thresh=0.75,
+    wandb_run=None,  # 🚀 新增：显式传入外部实例化的 wandb 对象
 ):
     """
     纯粹的业务验证层：不关心模型架构，不关心模型状态，只负责评测指标。
@@ -130,11 +131,7 @@ def validate_refcoco_one_epoch(
             textfeats = textfeats.to(device)
             mask = mask.to(device) if mask is not None else None
 
-            # ==========================================
-            # 🚀 极其黑盒的推理调用 (The Magic)
-            # 你不再需要 model.eval()，不需要 set_class，不需要 NMS！
-            # 哪怕你现在正处于训练的 step 中间，调它也绝对安全！
-            # ==========================================
+            # --- 推理调用 ---
             _, boxes, scores, _ = inference_single(
                 model=model, 
                 image_path=str(img_path), 
@@ -149,7 +146,7 @@ def validate_refcoco_one_epoch(
             # --- 业务逻辑：算 IoU 并统计 True Positive ---
             if len(scores) > 0:
                 best_idx = torch.argmax(scores)
-                best_box = boxes[best_idx][None, :]  # 取出得分最高的框 [1, 4]
+                best_box = boxes[best_idx][None, :]  
 
                 bboxGT = torch.tensor([bbox_gt_xyxy], dtype=torch.float32, device=device)
                 iou = box_iou(best_box, bboxGT)
@@ -160,11 +157,20 @@ def validate_refcoco_one_epoch(
     # 3. 汇总指标
     acc = tp_counter / valid_count if valid_count > 0 else 0.0
     
-    # 获取底层网络名字用于日志展示
     raw_model = model.module if hasattr(model, 'module') else model
     arch_name = "VL-RT-DETR" if hasattr(raw_model, 'predict') else "ExpAlignNet"
     
     print(f"\n[{arch_name} - RefCOCOg] Epoch {epoch} | Accuracy@0.5: {acc:.4f} ({tp_counter}/{valid_count})")
+
+    # ==========================================
+    # 📊 接入 wandb 系统 (通过显式传参)
+    # ==========================================
+    # 只有主进程且外部传了 wandb_run 才记录，代码极其清爽
+    if is_main_process and wandb_run is not None:
+        wandb_run.log({
+            "val/refcoco_acc": acc,
+            "epoch": epoch
+        })
 
     return {
         'refcoco_acc': acc,

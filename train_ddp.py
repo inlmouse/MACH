@@ -35,7 +35,7 @@ class TrainConfig:
     # 基础配置
     model_name = "vlrtdetrnet"
     num_epochs: int = 30
-    batch_size_per_gpu: int = 48
+    batch_size_per_gpu: int = 24
     num_workers: int = 4
     target_size: int = 640
     output_dir: str = "outputs-qwen2b-768"
@@ -48,7 +48,8 @@ class TrainConfig:
     num_classes: int = num_infonce_batch  # 等于 num_infonce_batch
     
     # 预训练权重路径
-    pretrain_model_path: Optional[str] = None#"outputs-qwen2b-768/model_last.pth"
+    pretrain_model_path: Optional[str] = "outputs-qwen2b-768/model_last.pth"
+    # resume: bool = True  # 是否续训
     pretrain_backbone: str = "/root/autodl-tmp/yoloe/third_party/dinov3/dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth"
     pretrain_text_encoder: str = "/root/autodl-tmp/Qwen3-VL-Embedding-2B"
     
@@ -59,13 +60,13 @@ class TrainConfig:
     # 优化器与训练策略
     val_interval: int = 1
     use_amp: bool = True
-    warmup_epochs: int = 3
+    warmup_epochs: int = 0
     base_lr: float = 1e-4#2e-3
     weight_decay: float = 1e-4#0.025
-    use_wandb: bool = False
+    use_wandb: bool = True
     wandb_project: str = "VLMs"
     wandb_entity: str = "inlmouse-tsinghua-university"
-    wandb_run_name: str = "vlrtdetrnet"
+    wandb_run_name: str = "vldinonet"
 
     # 数据集配置
     train_ann_files: List[str] = field(default_factory=lambda: [
@@ -398,6 +399,7 @@ def main():
                 image_root="/root/autodl-tmp/OOD/refcoco/images/train2014",
                 conf_thresh=0.01,
                 nms_thresh=0.75,
+                wandb_run=wandb_run,
             )
             if is_main_process(rank):
                 map_50_95 = val_results.get('map', 0.0)

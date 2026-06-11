@@ -88,9 +88,9 @@ def load_model(ckpt_path, args, device='cuda', base_lr=1e-4, weight_decay=1e-4, 
     
     # 核心逻辑：控制断点续训 vs 微调
     if resume:
-        epoch = ckpt.get('epoch', 1)
+        epoch = ckpt.get('epoch', 1) + 1
         optimizer_state_dict = ckpt.get('optimizer_state_dict', None)
-        # print(f"▶️ 续训模式开启：继承历史 Optimizer，从 Epoch {epoch} 继续。")
+        print(f"▶️ 续训模式开启：继承历史 Optimizer，从 Epoch {epoch} 继续。")
     else:
         epoch = 1
         optimizer_state_dict = None
@@ -171,7 +171,7 @@ def get_scheduler(optimizer, warmup_steps: int, epochs: int, steps_per_epoch: in
         # ==========================================
         if current_step < warmup_steps:
             # 防止第 0 步学习率为绝对的 0（避免死掉），给定一个极小的起点如 0.01 倍
-            return max(0.01, float(current_step) / float(max(1, warmup_steps)))
+            return max(0.001, float(current_step) / float(max(1, warmup_steps)))
         
         # ==========================================
         # 2. 阶段二：基于 Epoch 的 Multi-Step 衰减

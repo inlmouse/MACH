@@ -897,6 +897,11 @@ class DeformableTransformerDecoderLayer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
+        # cross attention text
+        self.ca_text = nn.MultiheadAttention(d_model, n_heads, dropout=dropout)
+        self.catext_dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.catext_norm = nn.LayerNorm(d_model)
+
         # Cross attention
         self.cross_attn = MSDeformAttn(d_model, n_levels, n_heads, n_points)
         self.dropout2 = nn.Dropout(dropout)
@@ -934,6 +939,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
         refer_bbox: torch.Tensor,
         feats: torch.Tensor,
         shapes: list,
+        text_dict: tuple,
         padding_mask: torch.Tensor | None = None,
         attn_mask: torch.Tensor | None = None,
         query_pos: torch.Tensor | None = None,
@@ -959,6 +965,23 @@ class DeformableTransformerDecoderLayer(nn.Module):
         ].transpose(0, 1)
         embed = embed + self.dropout1(tgt)
         embed = self.norm1(embed)
+
+        w, m = text_dict
+        B, nc, L, Dim = w.shape
+        w_flat = w.view(B, -1, Dim) # [B, nc * L, Dim]
+        m_flat = m.view(B, -1) # [B, nc * L]
+        key_padding_mask = ~m_flat.bool()
+        
+        embed2 = self.ca_text(
+            query=self.with_pos_embed(embed, query_pos).transpose(0, 1),
+            key=w_flat.transpose(0, 1),
+            value=w_flat.transpose(0, 1),
+            key_padding_mask=key_padding_mask,
+            attn_mask=None,
+            need_weights=False  # 训练时设为 False 节省大量显存
+        )[0].transpose(0, 1)
+        embed = embed + self.catext_dropout(embed2)
+        embed = self.catext_norm(embed)
 
         # Cross attention
         tgt = self.cross_attn(
@@ -1040,7 +1063,7 @@ class DeformableTransformerDecoder(nn.Module):
         refer_bbox = refer_bbox.sigmoid()
         w, m = text_dict
         for i, layer in enumerate(self.layers):
-            output = layer(output, refer_bbox, feats, shapes, padding_mask, attn_mask, pos_mlp(refer_bbox))
+            output = layer(output, refer_bbox, feats, shapes, text_dict, padding_mask, attn_mask, pos_mlp(refer_bbox))
 
             bbox = bbox_head[i](output)
             refined_bbox = torch.sigmoid(bbox + inverse_sigmoid(refer_bbox))
