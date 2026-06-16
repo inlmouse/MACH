@@ -194,8 +194,14 @@ class DetectionLoss(nn.Module):
 
         # 总损失 × batch_size（保持与原版一致，便于多卡平均）
         total_loss = loss.sum() * batch_size
-
-        return total_loss, loss.detach()  # 返回 scalar loss 和 [box, cls, dfl] 用于日志
+        loss_items = {
+            "loss_bbox": loss[0].detach().item(),
+            "loss_class": loss[1].detach().item(),
+            "loss_dfl": loss[2].detach().item(),
+            "loss_jepa": loss[3].detach().item() if jepa_loss is not None else 0.0,
+            "total_loss": total_loss.detach().item() / max(batch_size, 1) # 返回平均值供监控
+        }
+        return total_loss, loss_items  # 返回 scalar loss 和 [box, cls, dfl] 用于日志
 
     def update_class_no(self, new_nc):
         """动态更新类别数（如 fine-tune 时）"""

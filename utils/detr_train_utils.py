@@ -234,9 +234,9 @@ def train_one_epoch(
         imgs = batch['img'].to(device)
         B = imgs.shape[0]
         batch_captions = batch.get('batch_captions', [])
-        batch_captions = [s[:300] for s in batch_captions]
         # 文本特征提取
         if tokenlevel_embdedding:
+            batch_captions = [s[:300] for s in batch_captions]
             textfeats, mask = textencoder.embedtext(batch_captions, normalize=True, batch_size=len(batch_captions), tokenlevel=tokenlevel_embdedding)
             textfeats = textfeats.to(device)
             mask = mask.to(device)
@@ -321,7 +321,7 @@ def train_one_epoch(
         for k, v in loss_dict.items():
             if k not in accumulated_loss_dict:
                 accumulated_loss_dict[k] = 0.0
-            accumulated_loss_dict[k] += v.item()
+            accumulated_loss_dict[k] += float(v)#v.item()
 
         # ==========================================
         # 终端进度条 & Wandb 记录
@@ -330,17 +330,41 @@ def train_one_epoch(
             num_batches = batch_idx + 1
             
             # 提取最核心的三个 loss 用于进度条显示
-            avg_cls = accumulated_loss_dict.get('loss_class', 0) / num_batches
-            avg_box = accumulated_loss_dict.get('loss_bbox', 0) / num_batches
-            avg_giou = accumulated_loss_dict.get('loss_giou', 0) / num_batches
-            avg_total = total_loss_sum / num_batches
+            # avg_cls = accumulated_loss_dict.get('loss_class', 0) / num_batches
+            # avg_box = accumulated_loss_dict.get('loss_bbox', 0) / num_batches
+            # avg_giou = accumulated_loss_dict.get('loss_giou', 0) / num_batches
+            # avg_total = total_loss_sum / num_batches
             
-            pbar.set_postfix({
-                'Loss': f"{avg_total:.3f}",
-                'cls': f"{avg_cls:.3f}",
-                'box': f"{avg_box:.3f}",
-                'giou': f"{avg_giou:.3f}"
-            })
+            # pbar.set_postfix({
+            #     'Loss': f"{avg_total:.3f}",
+            #     'cls': f"{avg_cls:.3f}",
+            #     'box': f"{avg_box:.3f}",
+            #     'giou': f"{avg_giou:.3f}"
+            # })
+
+            display_map = {
+                'loss_class': 'cls',
+                'loss_bbox': 'bbox',
+                'loss_giou': 'giou',
+                'loss_dfl': 'dfl',
+                'loss_jepa': 'jepa'
+            }
+
+            # 1. 计算平均值
+            avg_losses = {k: v / num_batches for k, v in accumulated_loss_dict.items()}
+
+            # 2. 构建基础信息
+            postfix = {
+                'Loss': f"{total_loss_sum / num_batches:.3f}"
+            }
+
+            # 3. 动态遍历添加
+            for key, display_name in display_map.items():
+                if key in avg_losses:
+                    postfix[display_name] = f"{avg_losses[key]:.3f}"
+
+            # 4. 更新进度条
+            pbar.set_postfix(postfix)
             
             # 记录到 wandb (动态展开字典里的所有 Aux 和 DN Loss)
             if (wandb_run is not None) and (batch_idx % log_interval == 0 or batch_idx == len(dataloader) - 1):
@@ -351,7 +375,7 @@ def train_one_epoch(
                     "batch/lr": current_lr,
                 }
                 for k, v in loss_dict.items():
-                    log_data[f"batch/{k}"] = v.item()
+                    log_data[f"batch/{k}"] = float(v)#v.item()
                 
                 wandb_run.log(log_data, step=step)
     

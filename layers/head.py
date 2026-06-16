@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers.initialization import trunc_normal_
 from layers.jepa import AuxMultimodalJEPABranch
+from layers.TCEM import TCEM
 from utils.detect_utils import make_anchors, dist2bbox
 from layers.fusion import JointAttentionContrastiveHead
 
@@ -87,10 +88,10 @@ class BNContrastiveHead(nn.Module):
     def unfuse(self):
         self.forward = self._forward
 
-    def _forward_fuse(self, x, w):
+    def _forward_fuse(self, x, w, m=None):
         return x
     
-    def _forward(self, x, w):
+    def _forward(self, x, w, m=None):
         """Forward function of contrastive learning."""
         x = self.norm(x)
         # w = F.normalize(w, dim=-1, p=2)
@@ -856,8 +857,8 @@ class Detect(nn.Module):
 
         if self.text_embed_dim > 0:
             # self.cv3 = nn.ModuleList(nn.Sequential(nn.Conv2d(x, self.text_embed_dim, kernel_size=1, stride=1)) for x in ch)
-            self.jepa = nn.ModuleList([AuxMultimodalJEPABranch(dim=text_embed_dim, reduction_ratio=2**(2-i)) for i in range(len(ch))])
-            self.alignhead = nn.ModuleList(AttentionContrastiveHead(self.text_embed_dim, num_heads=3)  for _ in ch)
+            # self.jepa = nn.ModuleList([AuxMultimodalJEPABranch(dim=text_embed_dim, reduction_ratio=2**(2-i)) for i in range(len(ch))])
+            self.alignhead = nn.ModuleList(TCEM(self.text_embed_dim)  for _ in ch)
         # else:
         #     self.cv3 = nn.ModuleList(nn.Sequential(nn.Conv2d(x, self.nc, kernel_size=1, stride=1)) for x in ch)
 
@@ -871,7 +872,7 @@ class Detect(nn.Module):
         for i in range(self.nl):
             if self.text_embed_dim > 0 and w is not None:
                 contras_feat = self.cv3[i](x[i])
-                jepa_loss += self.jepa[i](contras_feat, w, m, batch)
+                # jepa_loss += self.jepa[i](contras_feat, w, m, batch)
                 x[i] = torch.cat((self.cv2[i](x[i]), self.alignhead[i](contras_feat, w=w, m=m)), 1)
             else:
                 x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)

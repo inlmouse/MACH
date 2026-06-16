@@ -33,23 +33,23 @@ import wandb
 @dataclass
 class TrainConfig:
     # 基础配置
-    model_name = "vlrtdetrnet"
+    model_name = "expalignet"
     num_epochs: int = 30
-    batch_size_per_gpu: int = 24
+    batch_size_per_gpu: int = 48
     num_workers: int = 4
     target_size: int = 640
     output_dir: str = "outputs-qwen2b-768"
     
     # 模型与特征配置
     text_embed_dim: int = 768
-    tokenlevel_embdedding: bool = True
-    num_infonce_batch: int = 20
+    tokenlevel_embdedding: bool = False
+    num_infonce_batch: int = 80
     backbone_size: str = "tiny"
     num_classes: int = num_infonce_batch  # 等于 num_infonce_batch
     
     # 预训练权重路径
-    pretrain_model_path: Optional[str] = "outputs-qwen2b-768/model_last.pth"
-    # resume: bool = True  # 是否续训
+    pretrain_model_path: Optional[str] = None#"outputs-qwen2b-768/vlrtdetr-epoch34.pth"
+    resume: bool = False  # 是否续训
     pretrain_backbone: str = "/root/autodl-tmp/yoloe/third_party/dinov3/dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth"
     pretrain_text_encoder: str = "/root/autodl-tmp/Qwen3-VL-Embedding-2B"
     
@@ -61,12 +61,12 @@ class TrainConfig:
     val_interval: int = 1
     use_amp: bool = True
     warmup_epochs: int = 0
-    base_lr: float = 1e-4#2e-3
-    weight_decay: float = 1e-4#0.025
+    base_lr: float = 2e-3#1e-4#
+    weight_decay: float = 0.025#1e-4#
     use_wandb: bool = True
     wandb_project: str = "VLMs"
     wandb_entity: str = "inlmouse-tsinghua-university"
-    wandb_run_name: str = "vldinonet"
+    wandb_run_name: str = "tcem"
 
     # 数据集配置
     train_ann_files: List[str] = field(default_factory=lambda: [
