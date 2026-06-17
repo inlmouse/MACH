@@ -130,7 +130,8 @@ class vlrtdetrnet(nn.Module):
         
         # 2. 前向传播
         # 在非 training 模式下，forward 返回 (preds, None, None)，preds 
-        forward_outs = self.forward(x, w, m=m)[0]
+        with torch.amp.autocast(device_type='cuda', dtype=torch.float16, enabled=True):
+            forward_outs = self.forward(x, w, m=m)[0]
         preds = forward_outs[0] if isinstance(forward_outs, tuple) else forward_outs
         
         # preds 是 decoder.postprocess 的输出

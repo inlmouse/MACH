@@ -48,7 +48,7 @@ class TCEM(nn.Module):
         # ==========================================
         # 3. TCPF: 文本条件势函数
         # ==========================================
-        self.W_comp = nn.Linear(dim, dim, bias=False)
+        # self.W_comp = nn.Linear(dim, dim, bias=False)
         self.bg_self_comp = nn.Parameter(torch.ones(1)) 
         
         # ==========================================
@@ -70,8 +70,8 @@ class TCEM(nn.Module):
         ])
         with torch.no_grad():
             # 假设 self.W_comp 是 nn.Linear(d, d, bias=False)
-            nn.init.eye_(self.W_comp.weight)  # 初始化为单位矩阵
-            self.W_comp.weight.data.mul_(0.1) # 缩小初始缩放，防止排斥力过猛
+            # nn.init.eye_(self.W_comp.weight)  # 初始化为单位矩阵
+            # self.W_comp.weight.data.mul_(0.1) # 缩小初始缩放，防止排斥力过猛
             
             # 同样处理特征投影层 self.feat_proj
             nn.init.eye_(self.feat_proj.weight)
@@ -120,8 +120,8 @@ class TCEM(nn.Module):
             T_active = torch.gather(text_feats, 1, active_text_idx.unsqueeze(-1).expand(-1, -1, d))
         else:
             k_tokens, k_texts = N, M
-            active_token_idx = torch.arange(N, device=device).unsqueeze(0).expand(B, N)
-            active_text_idx = torch.arange(M, device=device).unsqueeze(0).expand(B, M)
+            # active_token_idx = torch.arange(N, device=device).unsqueeze(0).expand(B, N)
+            # active_text_idx = torch.arange(M, device=device).unsqueeze(0).expand(B, M)
             E_active, T_active = visual_feats, text_feats
 
         # 3. 构建能量组件 (U, mu, W) - 逻辑对于两分支完全通用
@@ -130,8 +130,8 @@ class TCEM(nn.Module):
         bg_energy = self.bg_head(torch.cat([E_active, max_active_resp], dim=-1))
         U = torch.cat([bg_energy, A_active], dim=-1)
 
-        T_proj = self.W_comp(T_active)
-        T_proj = T_proj - T_proj.mean(dim=1, keepdim=True)
+        T_proj = T_active # self.W_comp(T_active)
+        # T_proj = T_proj - T_proj.mean(dim=1, keepdim=True)
         T_norm = F.normalize(T_proj, p=2, dim=-1)
         mu_text = torch.bmm(T_norm, T_norm.transpose(1, 2)) 
 
@@ -150,28 +150,34 @@ class TCEM(nn.Module):
         Q_t = F.softmax(U, dim=-1)
         for t in range(self.num_iterations):
             lambda_t = F.softplus(self.raw_lambda_list[t])
-            tau_t = F.softplus(self.raw_tau_list[t]) + 1e-4
+            tau_t = F.softplus(self.raw_tau_list[t]) + 1e-2
+            # 如果是最后一步迭代，我们不再去算它的归一化 Q_t 概率
+            if t == self.num_iterations - 1:
+                # 直接截取这个未饱和、具备高判别力动态范围的文本端 Logit 场！
+                # 此时的总能量场维度是 [B, N, M+1]，第 0 维是背景，1: 是文本
+                Q_t = U + lambda_t * torch.bmm(torch.bmm(W, Q_t), mu) # [B, N, M+1]
+                break
             Q_t = F.softmax((U + lambda_t * torch.bmm(torch.bmm(W, Q_t), mu)) / tau_t, dim=-1)
 
         # 5. 还原与归一化
         # 使用 scatter 构建 Q_final，这种方式比索引赋值更具鲁棒性
-        Q_final = torch.full((B, N, M + 1), 1e-4, device=device, dtype=E_active.dtype)
+        # Q_final = torch.full((B, N, M + 1), 1e-4, device=device, dtype=E_active.dtype)
         
-        # 统一处理背景项
-        max_spatial_scores, _ = A_unary.max(dim=-1)
-        Q_final[:, :, 0] = torch.sigmoid(self.bg_head(torch.cat([visual_feats, max_spatial_scores.unsqueeze(-1)], dim=-1))).squeeze(-1)
+        # # 统一处理背景项
+        # max_spatial_scores, _ = A_unary.max(dim=-1)
+        # Q_final[:, :, 0] = torch.sigmoid(self.bg_head(torch.cat([visual_feats, max_spatial_scores.unsqueeze(-1)], dim=-1))).squeeze(-1)
 
-        # 将迭代结果 scatter 回去
-        # 这里的 text_idx_with_bg 逻辑必须兼容 k_tokens == N 的情况
-        idx_map = torch.cat([torch.zeros(B, 1, device=device, dtype=torch.long), active_text_idx + 1], dim=1)
-        # 使用 scatter_ 填充文本维
-        Q_final.scatter_(2, idx_map.unsqueeze(1).expand(B, N, -1).gather(1, active_token_idx.unsqueeze(-1).expand(-1, -1, k_texts+1)), Q_t)
+        # # 将迭代结果 scatter 回去
+        # # 这里的 text_idx_with_bg 逻辑必须兼容 k_tokens == N 的情况
+        # idx_map = torch.cat([torch.zeros(B, 1, device=device, dtype=torch.long), active_text_idx + 1], dim=1)
+        # # 使用 scatter_ 填充文本维
+        # Q_final.scatter_(2, idx_map.unsqueeze(1).expand(B, N, -1).gather(1, active_token_idx.unsqueeze(-1).expand(-1, -1, k_texts+1)), Q_t)
 
-        # 归一化以严格满足单纯形约束
-        Q_final = Q_final / (Q_final.sum(dim=-1, keepdim=True) + 1e-6)
+        # # 归一化以严格满足单纯形约束
+        # Q_final = Q_final / (Q_final.sum(dim=-1, keepdim=True) + 1e-6)
         # return Q_final
         # 1. 剥离第 0 维的背景，保留纯文本类别概率空间 [B, N, M]
-        Q_text = Q_final[:, :, 1:]
+        Q_text = Q_t[:, :, 1:]
 
         # 2. 变换维度至标准的深度学习视觉格式 [B, M, H, W]
         # 先转置为 [B, M, N]，再完美还原为二维图像空间空间 [B, M, H, W]

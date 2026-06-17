@@ -166,7 +166,8 @@ class expalignet(nn.Module):
         try:
             # 2. 前向传播
             # 即使 head 缓存了 class，我们依然按照签名传入 w，让 neck 或其他组件正常工作
-            forward_outs = self.forward(x, w, m=m)
+            with torch.amp.autocast(device_type='cuda', dtype=torch.float16, enabled=True):
+                forward_outs = self.forward(x, w, m=m)
             preds = forward_outs[0] if isinstance(forward_outs, tuple) else forward_outs
             
         finally:
