@@ -1,8 +1,8 @@
 
 # train_ddp.py
-# 使用 DDP (DistributedDataParallel) 进行多卡训练
-# 单机多卡 torchrun --nproc_per_node=8 train_ddp.py
-# 多机多卡 torchrun --nnodes=2 --nproc_per_node=2 --node_rank=0 --master_addr="主节点IP" --master_port=12345 train_ddp.py
+# Multi-GPU training with DDP (DistributedDataParallel)
+# Single-node:  torchrun --nproc_per_node=8 train_ddp.py
+# Multi-node:   torchrun --nnodes=2 --nproc_per_node=2 --node_rank=0 --master_addr="<master-ip>" --master_port=12345 train_ddp.py
 
 import os
 import pickle
@@ -28,88 +28,70 @@ import wandb
 
 
 # ==========================================
-# 1. 集中管理配置项 (Dataclass)
+# 1. Centralized configuration (Dataclass)
 # ==========================================
 @dataclass
 class TrainConfig:
-    # 基础配置
+    # Basic settings
     model_name = "expalignet"
     num_epochs: int = 30
-    batch_size_per_gpu: int = 48
+    batch_size_per_gpu: int = 16
     num_workers: int = 4
     target_size: int = 640
     output_dir: str = "outputs-qwen2b-768"
     
-    # 模型与特征配置
+    # Model and feature settings
     text_embed_dim: int = 768
-    tokenlevel_embdedding: bool = False
-    num_infonce_batch: int = 80
+    tokenlevel_embdedding: bool = True
+    num_infonce_batch: int = 20
     backbone_size: str = "tiny"
-    num_classes: int = num_infonce_batch  # 等于 num_infonce_batch
+    num_classes: int = num_infonce_batch  # equal to num_infonce_batch
     
-    # 预训练权重路径
-    pretrain_model_path: Optional[str] = "outputs-qwen2b-768/model_tcem_epoch1.pth"
-    resume: bool = False  # 是否续训
-    pretrain_backbone: str = "/root/autodl-tmp/yoloe/third_party/dinov3/dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth"
-    pretrain_text_encoder: str = "/root/autodl-tmp/Qwen3-VL-Embedding-2B"
+    # Pretrained weight paths
+    pretrain_model_path: Optional[str] = None#"outputs-qwen2b-768/model_tcem_epoch1.pth"
+    resume: bool = False  # whether to resume training
+    pretrain_backbone: str = "/path/to/dinov3/dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth"
+    pretrain_text_encoder: str = "/path/to/Qwen3-VL-Embedding-2B"
     
-    # 缓存配置
-    cache_file: str = "/root/autodl-tmp/ddp_train_dataset_cache.pkl"
+    # Cache settings
+    cache_file: str = "/path/to/ddp_train_dataset_cache.pkl"
     embdedding_cache_file: str = "dataset/all_caption_embeddings.pt"
     
-    # 优化器与训练策略
+    # Optimizer and training strategy
     val_interval: int = 1
     use_amp: bool = True
     warmup_epochs: int = 0
-    base_lr: float = 1e-4#2e-3#
-    weight_decay: float = 1e-4#0.025#
+    base_lr: float = 2e-3#1e-4#
+    weight_decay: float = 0.025#1e-4#
     use_wandb: bool = True
     wandb_project: str = "VLMs"
-    wandb_entity: str = "inlmouse-tsinghua-university"
-    wandb_run_name: str = "tcem"
+    wandb_entity: str = "N/A"
+    wandb_run_name: str = "mach+jepa"
 
-    # 数据集配置
+    # Dataset settings
     train_ann_files: List[str] = field(default_factory=lambda: [
-        # "/root/autodl-tmp/OOD/Objects365_v2/annotations/zhiyuan_objv2_train_fixname_with_caption.json",
-        "/root/autodl-tmp/OOD/DeepFashion2/annotations/deepfasion2_with_caption.json",
-        "/root/autodl-tmp/OOD/coco/annotations/lvis_v1_train.json",
-        "/root/autodl-tmp/OOD/Objects365_v1/annotations/objects365_train_with_caption.json",
-        "/root/autodl-tmp/OOD/Objects365_v1/annotations/objects365_train_segm.json",
-        "/root/autodl-tmp/OOD/flickr30k/final_flickr_separateGT_train_segm.json",
-        "/root/autodl-tmp/OOD/MixedGrounding/mdetr_annotations/final_mixed_train_no_coco_segm_fixed.json",
-        "/root/autodl-tmp/OOD/refcoco/annotations/grefcoco_sgem.json",
-        "/root/autodl-tmp/OOD/refcoco/annotations/reircoco_train_segm.json",
-        "/root/autodl-tmp/OOD/refcoco/annotations/refcoco_unc_train_coco_segm.json",
-        "/root/autodl-tmp/OOD/refcoco/annotations/refcoco+_unc_train_coco_segm.json",
-        "/root/autodl-tmp/OOD/refcoco/annotations/refcocog_umd_train_coco_segm.json",
+        "/path/to/Objects365_v1/annotations/objects365_train_with_caption.json",
+        "/path/to/flickr30k/final_flickr_separateGT_train_segm.json",
+        "/path/to/MixedGrounding/mdetr_annotations/final_mixed_train_no_coco_segm_fixed.json",
     ])
     train_image_roots: List[str] = field(default_factory=lambda: [
-        # "/root/autodl-tmp/OOD/Objects365_v2/images/train",
-        "/root/autodl-tmp/OOD/DeepFashion2/images",
-        "/root/autodl-tmp/OOD/coco/images/train2017",
-        "/root/autodl-tmp/OOD/Objects365_v1/images/train",
-        "/root/autodl-tmp/OOD/Objects365_v1/images/train",
-        "/root/autodl-tmp/OOD/flickr30k/flickr30k-images",
-        "/root/autodl-tmp/OOD/MixedGrounding/images",
-        "/root/autodl-tmp/OOD/refcoco/images/train2014",
-        "/root/autodl-tmp/OOD/refcoco/images/train2014",
-        "/root/autodl-tmp/OOD/refcoco/images/train2014",
-        "/root/autodl-tmp/OOD/refcoco/images/train2014",
-        "/root/autodl-tmp/OOD/refcoco/images/train2014",
+        "/path/to/Objects365_v1/images/train",
+        "/path/to/flickr30k/flickr30k-images",
+        "/path/to/MixedGrounding/images",
     ])
     allow_complex_augmentation: List[bool] = field(default_factory=lambda: [
-        True, True, False, True, False, False, False, False, False, True, False
+        False, False, False
     ])
-    # allow_complex_augmentation: List[bool] = field(default_factory=lambda: [ False ])
-    val_ann_files: List[str] = field(default_factory=lambda: ["/root/autodl-tmp/OOD/coco/annotations/instances_val2017.json"])
-    val_image_roots: List[str] = field(default_factory=lambda: ["/root/autodl-tmp/OOD/coco/images/val2017"])
+
+    val_ann_files: List[str] = field(default_factory=lambda: ["/path/to/coco/annotations/instances_val2017.json"])
+    val_image_roots: List[str] = field(default_factory=lambda: ["/path/to/coco/images/val2017"])
 
 # ==========================================
-# 2. 核心模块化函数
+# 2. Core modular functions
 # ==========================================
 
 def setup_wandb(config: TrainConfig):
-    """初始化 Wandb"""
+    """Initialize Wandb"""
     return wandb.init(
         entity=config.wandb_entity,
         project=config.wandb_project,
@@ -118,19 +100,19 @@ def setup_wandb(config: TrainConfig):
     )
 
 def prepare_dataset(config: TrainConfig, rank: int, world_size: int, text_encoder):
-    """准备数据集和缓存：主进程生成，子进程加载"""
+    """Prepare dataset and caches: built by the main process, loaded by the other ranks"""
     cache_data = None
     all_caption_embeddings = None
     caption_to_idx = None
     all_captions_list = None
 
     # ==================================
-    # [主进程] 处理数据并建立缓存
+    # [Main process] Build data and caches
     # ==================================
     if is_main_process(rank):
         print("[Main] Building training dataset and computing embeddings...")
         
-        # 1. Dataset 缓存
+        # 1. Dataset cache
         if os.path.exists(config.cache_file):
             with open(config.cache_file, 'rb') as f:
                 cache_data = pickle.load(f)
@@ -156,17 +138,17 @@ def prepare_dataset(config: TrainConfig, rank: int, world_size: int, text_encode
             del temp_loader
         print(f"[Main] Dataset ready, cached labels to {config.cache_file}")
 
-        # 2. Caption Embedding 缓存 (主进程读取或生成)
+        # 2. Caption embedding cache (read or generated by the main process)
         if not config.tokenlevel_embdedding:
             if os.path.exists(config.embdedding_cache_file):
-                print(f"[Main] 从缓存 {config.embdedding_cache_file} 加载 caption 嵌入")
+                print(f"[Main] Loading caption embeddings from cache {config.embdedding_cache_file}")
                 embdedding_cache_data = torch.load(config.embdedding_cache_file, map_location='cpu')
                 all_caption_embeddings, caption_to_idx = embdedding_cache_data
                 all_captions_list = list(caption_to_idx.keys())
             else:
                 all_captions_set = {cap for sample in cache_data['samples'] for cap in sample.get("captions", [])}
                 all_captions_list = sorted(list(all_captions_set))
-                print(f"[Main] 预计算 {len(all_captions_list)} 个 caption embeddings...")
+                print(f"[Main] Precomputing {len(all_captions_list)} caption embeddings...")
                 
                 all_caption_embeddings, _ = text_encoder.embedtext(
                     all_captions_list, normalize=True, batch_size=64, tokenlevel=False
@@ -174,27 +156,27 @@ def prepare_dataset(config: TrainConfig, rank: int, world_size: int, text_encode
                 caption_to_idx = {cap: i for i, cap in enumerate(all_captions_list)}
                 
                 torch.save((all_caption_embeddings.cpu(), caption_to_idx), config.embdedding_cache_file)
-                print(f"[Main] Caption embeddings 已缓存到 {config.embdedding_cache_file}")
+                print(f"[Main] Caption embeddings cached to {config.embdedding_cache_file}")
                 
 
-    # Barrier：等待主进程完成数据集和嵌入的计算与缓存写入
+    # Barrier: wait for the main process to finish building and writing the caches
     if world_size > 1:
         dist.barrier()
 
     # ==================================
-    # [子进程] 读取缓存
+    # [Worker ranks] Load from cache
     # ==================================
     if not is_main_process(rank):
         print(f"[Rank {rank}] Loading dataset from cache...")
         
-        # 1. Dataset 缓存读取
+        # 1. Load dataset cache
         with open(config.cache_file, 'rb') as f:
             cache_data = pickle.load(f)
             
-        # 2. Caption Embedding 缓存读取
+        # 2. Load caption embedding cache
         if not config.tokenlevel_embdedding:
             if os.path.exists(config.embdedding_cache_file):
-                print(f"[Rank {rank}] Worker: 从缓存 {config.embdedding_cache_file} 加载 caption 嵌入")
+                print(f"[Rank {rank}] Worker: loading caption embeddings from cache {config.embdedding_cache_file}")
                 embdedding_cache_data = torch.load(config.embdedding_cache_file, map_location='cpu')
                 all_caption_embeddings, caption_to_idx = embdedding_cache_data
                 all_captions_list = list(caption_to_idx.keys())
@@ -202,7 +184,7 @@ def prepare_dataset(config: TrainConfig, rank: int, world_size: int, text_encode
                 assert False, f"Embedding cache not found for worker rank {rank}!"
 
     # ==================================
-    # 构建 Dataset 和 DataLoader
+    # Build Dataset and DataLoader
     # ==================================
     train_dataset = UnifiedDetectionDataset(
         samples=cache_data['samples'],
@@ -212,7 +194,7 @@ def prepare_dataset(config: TrainConfig, rank: int, world_size: int, text_encode
         istrain=True,
     )
     
-    # 注意：如果 UnifiedDetectionDataset 需要接收 embeddings，记得在这里传入
+    # Note: if UnifiedDetectionDataset needs the embeddings, pass them in here
     # train_dataset.all_caption_embeddings = all_caption_embeddings 
     
     train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True) if world_size > 1 else None
@@ -231,23 +213,23 @@ def prepare_dataset(config: TrainConfig, rank: int, world_size: int, text_encode
 
 
 def build_training_model(config, device: torch.device, local_rank: int, world_size: int, steps_per_epoch: int):
-    """构建模型、优化器和调度器 (完美适配 Factory 与多架构)"""
+    """Build model, optimizer and scheduler (compatible with the factory and multiple architectures)"""
     
-    # 1. 把 config (可能是 dataclass 或 argparse) 提取为标准的 args 字典供 Factory 使用
+    # 1. Extract the config (dataclass or argparse) into a standard args dict for the factory
     model_args = {
-        'model_name': getattr(config, 'model_name', 'vlrtdetrnet'), # 默认使用新架构
+        'model_name': getattr(config, 'model_name', 'vlrtdetrnet'), # default to the new architecture
         'text_embed_dim': config.text_embed_dim,
         'size': getattr(config, 'backbone_size', 'tiny'),
         'num_classes': config.num_classes,
         'pretrained': getattr(config, 'pretrain_backbone', None),
-        'reg_max': getattr(config, 'reg_max', 16) # 兼容旧版 expalignet
+        'reg_max': getattr(config, 'reg_max', 16) # backward compatibility with expalignet
     }
 
-    # 获取续训开关 (假设你在 config 里配了这个参数，没配则默认如果是预训练权重就做微调)
+    # Resume switch (if not set in config, a pretrained checkpoint is treated as fine-tuning)
     resume_mode = getattr(config, 'resume', False)
 
     # ==========================================
-    # 2. 核心加载逻辑 (一行代码搞定从头训/续训/微调、优化器分组)
+    # 2. Core loading logic (from-scratch / resume / fine-tune and optimizer param groups in one call)
     # ==========================================
     model, optimizer, start_epoch = load_model(
         ckpt_path=config.pretrain_model_path,
@@ -259,7 +241,7 @@ def build_training_model(config, device: torch.device, local_rank: int, world_si
     )
 
     # ==========================================
-    # 3. 学习率调度器
+    # 3. Learning rate scheduler
     # ==========================================
     scheduler = get_scheduler(
         optimizer=optimizer, 
@@ -269,12 +251,12 @@ def build_training_model(config, device: torch.device, local_rank: int, world_si
     )
     
     # ==========================================
-    # 4. DDP 多卡包装与极致加速
+    # 4. DDP wrapping and throughput optimization
     # ==========================================
     if world_size > 1:
-        # 💡 核心优化：vlrtdetrnet 已经被我们清理干净，没有任何未参与前向传播的游离参数。
-        # 关闭 find_unused_parameters 可以省去 DDP 每次反向传播时遍历计算图寻找废弃参数的时间，极大提升吞吐量！
-        # 但如果是旧版的 expalignet，可能还需要开着。
+        # Tip: vlrtdetrnet has no parameters that stay unused in the forward pass, so
+        # disabling find_unused_parameters saves DDP from traversing the graph every
+        # backward step and improves throughput. The legacy expalignet may still need it.
         need_find_unused = (model_args['model_name'] == 'expalignet')
         
         model = DDP(
@@ -288,13 +270,13 @@ def build_training_model(config, device: torch.device, local_rank: int, world_si
 
 
 # ==========================================
-# 3. 主循环
+# 3. Main loop
 # ==========================================
 def main():
     config = TrainConfig()
     os.makedirs(config.output_dir, exist_ok=True)
     
-    # 1. 环境与 DDP 初始化
+    # 1. Environment and DDP initialization
     rank, world_size, local_rank = setup_distributed()
     device = torch.device(f'cuda:{local_rank}')
     
@@ -304,12 +286,12 @@ def main():
 
     wandb_run = setup_wandb(config) if (config.use_wandb and is_main_process(rank)) else None
 
-    # 2. 文本编码器初始化
+    # 2. Text encoder initialization
     text_encoder = None
     #if is_main_process(rank):
     text_encoder = Qwen3VLEmbeddingTextEmbedder(config.pretrain_text_encoder, device=device, mrl_truncate=config.text_embed_dim)
 
-    # 3. 准备数据
+    # 3. Prepare data
     all_caption_embeddings = None
     caption_to_idx = None
     train_loader, train_sampler, all_caption_embeddings, caption_to_idx = prepare_dataset(config, rank, world_size, text_encoder)
@@ -336,12 +318,12 @@ def main():
 
     scaler = GradScaler() if config.use_amp else None
 
-    # 5. 训练主循环
+    # 5. Training loop
     best_map = 0.0
     for epoch in range(start_epoch - 1, config.num_epochs):
         current_epoch = epoch + 1
         
-        # --- 训练阶段 ---
+        # --- Training phase ---
         train_results = train_one_epoch(
             model=model,
             dataloader=train_loader,
@@ -360,9 +342,9 @@ def main():
             caption_to_idx=caption_to_idx,
         )
         
-        # --- 验证阶段 ---
+        # --- Validation phase ---
         is_best = False
-        # --- 保存权重 ---
+        # --- Save checkpoint ---
         save_checkpoint(
             model=model,
             optimizer=optimizer,
@@ -394,9 +376,9 @@ def main():
                 is_main_process=is_main_process(rank),
                 textencoder=text_encoder if is_main_process(rank) else None,
                 output_dir=config.output_dir,
-                # RefCOCOg 专用
-                coco_json_path="/root/autodl-tmp/OOD/refcoco/annotations/refcoco_testA_reviewed.json",
-                image_root="/root/autodl-tmp/OOD/refcoco/images/train2014",
+                # RefCOCOg-specific
+                coco_json_path="/path/to/refcoco/annotations/refcoco_testA_reviewed.json",
+                image_root="/path/to/refcoco/images/train2014",
                 conf_thresh=0.01,
                 nms_thresh=0.75,
                 wandb_run=wandb_run,
@@ -408,7 +390,7 @@ def main():
                     is_best = True
         
         # break
-    # 6. 清理退出
+    # 6. Cleanup and exit
     if wandb_run and is_main_process(rank):
         wandb_run.finish()
     cleanup_distributed()

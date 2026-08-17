@@ -107,3 +107,12 @@ coverage.xml
 /uv.lock
 /visualize_gaussian_masks.py
 /wandb
+
+# ==========================================
+# 6. 未使用/废弃的模块与文件（保留本地文件，仅移出版本管理）
+# ==========================================
+/layers/dynamicell.py            # 无任何引用的实验模块
+/dataset/sltransform.py          # 无任何引用的额外增强（未被 transforms.py 使用）
+/optim/                          # Muon 优化器，训练入口均未使用
+/evaluation/refcoco_offline_evaluator.py  # 已被 refcoco_reviewed_offline_evaluator.py 取代
+/2608.12748v1.pdf                # 论文 PDF

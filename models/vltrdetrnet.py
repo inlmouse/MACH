@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from layers.fpn import FPANeck
-from layers.vitneck import ViTNeck
 from layers.vldetrhead import VLRTDETRDecoder
 from loss.dertloss import RTDETRDetectionLoss
 from models.convnext import ConvNeXt
@@ -22,7 +21,6 @@ class vlrtdetrnet(nn.Module):
         
         # neck
         self.neck = FPANeck(backbone_channels=backbone_dims)
-        # self.neck = ViTNeck(proj_dim=backbone_dims)
 
         # head（Detect 模块）- 使用 neck 的输出通道
         # neck_out_channels = self.neck.get_output_channels()  # 获取 neck 输出的通道数列表
